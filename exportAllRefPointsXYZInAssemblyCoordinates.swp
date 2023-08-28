@@ -1,0 +1,223 @@
+'https://help.solidworks.com/2023/english/api/sldworksapi/traverse_assembly_at_component_and_feature_level_example_vb.htm
+'https://help.solidworks.com/2023/english/api/sldworksapi/transform_point_from_component_space_to_assembly_space_example_vb.htm
+Dim ignoreUnnamed As Boolean
+Dim ignoreMirrored As Boolean
+Option Explicit
+
+Sub TraverseFeatureFeatures(swComp As SldWorks.Component2, swFeat As SldWorks.Feature, nLevel As Long, xlWorksheet As Object, row As Long)
+    Dim swSubFeat As SldWorks.Feature
+    Dim swSubSubFeat As SldWorks.Feature
+    Dim swSubSubSubFeat As SldWorks.Feature
+    Dim sPadStr As String
+    Dim i As Long
+    For i = 0 To nLevel
+        sPadStr = sPadStr + "  "
+    Next i
+    
+    While Not swFeat Is Nothing
+        doTheThing sPadStr, swFeat, swComp, xlWorksheet, row
+        Set swSubFeat = swFeat.GetFirstSubFeature
+        While Not swSubFeat Is Nothing
+            doTheThing sPadStr, swSubFeat, swComp, xlWorksheet, row
+            Set swSubSubFeat = swSubFeat.GetFirstSubFeature
+            While Not swSubSubFeat Is Nothing
+                doTheThing sPadStr, swSubSubFeat, swComp, xlWorksheet, row
+                Set swSubSubSubFeat = swSubFeat.GetFirstSubFeature
+                While Not swSubSubSubFeat Is Nothing
+                    doTheThing sPadStr, swSubSubSubFeat, swComp, xlWorksheet, row
+                    Set swSubSubSubFeat = swSubSubSubFeat.GetNextSubFeature()
+                Wend
+                Set swSubSubFeat = swSubSubFeat.GetNextSubFeature()
+            Wend
+            Set swSubFeat = swSubFeat.GetNextSubFeature()
+        Wend
+        Set swFeat = swFeat.GetNextFeature
+    Wend
+End Sub
+
+Sub doTheThing(sPadStr As String, swFeat As SldWorks.Feature, swComp As SldWorks.Component2, xlWorksheet As Object, row As Long)
+    Dim swMathPt As SldWorks.MathPoint
+    If Not swComp Is Nothing And swFeat.GetTypeName = "RefPoint" Then
+        Set swMathPt = swFeat.GetSpecificFeature2.GetRefPoint
+        'Debug.Print sPadStr + swFeat.Name
+        cmpSpace2asmSpace swFeat, swComp, xlWorksheet, row
+    End If
+End Sub
+
+Sub TraverseComponentFeatures(swComp As SldWorks.Component2, nLevel As Long, xlWorksheet As Object, row As Long)
+    Dim swFeat As SldWorks.Feature
+
+    Set swFeat = swComp.FirstFeature
+    TraverseFeatureFeatures swComp, swFeat, nLevel, xlWorksheet, row
+End Sub
+
+Sub TraverseComponent(swComp As SldWorks.Component2, nLevel As Long, xlWorksheet As Object, row As Long)
+    Dim vChildComp As Variant
+    Dim swChildComp As SldWorks.Component2
+    Dim swCompConfig As SldWorks.Configuration
+    Dim sPadStr As String
+    Dim i As Long
+    For i = 0 To nLevel - 1
+        sPadStr = sPadStr + "  "
+    Next i
+    
+    vChildComp = swComp.GetChildren
+    For i = 0 To UBound(vChildComp)
+        Set swChildComp = vChildComp(i)
+        'Debug.Print sPadStr & "+" & swChildComp.Name2 & " <" & swChildComp.ReferencedConfiguration & ">"
+        TraverseComponentFeatures swChildComp, nLevel, xlWorksheet, row
+        TraverseComponent swChildComp, nLevel + 1, xlWorksheet, row
+    Next i
+End Sub
+
+Sub TraverseModelFeatures(swModel As SldWorks.ModelDoc2, nLevel As Long, xlWorksheet As Object, row As Long)
+    Dim swFeat As SldWorks.Feature
+    Set swFeat = swModel.FirstFeature
+    TraverseFeatureFeatures swModel.GetActiveConfiguration.GetRootComponent3(True), swFeat, nLevel, xlWorksheet, row
+End Sub
+
+Function RemoveAfterCaret(inputString As String) As String
+    Dim caretPosition As Long
+    caretPosition = InStr(inputString, "^")
+    
+    If caretPosition > 0 Then
+        RemoveAfterCaret = Left(inputString, caretPosition - 1)
+    Else
+        RemoveAfterCaret = inputString
+    End If
+End Function
+
+Sub main()
+    Dim swApp As SldWorks.SldWorks
+    Dim swModel As SldWorks.ModelDoc2
+    Dim swAssy As SldWorks.AssemblyDoc
+    Dim swConf As SldWorks.Configuration
+    Dim swRootComp As SldWorks.Component2
+    Dim nStart As Long
+    Set swApp = Application.SldWorks
+    Set swModel = swApp.ActiveDoc
+    Set swConf = swModel.GetActiveConfiguration
+    Set swRootComp = swConf.GetRootComponent3(True)
+    
+    Dim xlApp As Object
+    Dim xlWorkbook As Object
+    Dim xlWorksheet As Object
+    Dim row As Long
+    
+    Set xlApp = CreateObject("Excel.Application")
+    Set xlWorkbook = xlApp.Workbooks.Add
+    Set xlWorksheet = xlWorkbook.Sheets(1)
+
+    writeHeaders xlWorksheet, row
+
+    Dim Ans As Integer
+    Ans = MsgBox("Should unnamed points be excluded? (e.g., Point1, Point2, Point3, ...)", vbYesNo)
+    Select Case Ans
+      Case vbYes
+          ignoreUnnamed = True
+      Case vbNo
+          ignoreUnnamed = False
+    End Select
+    
+    Ans = MsgBox("Should points on only one side of the YZ-plane be considered? (only points with positive Y-values)", vbYesNo)
+    Select Case Ans
+      Case vbYes
+          ignoreMirrored = True
+      Case vbNo
+          ignoreMirrored = False
+    End Select
+    
+    xlApp.Visible = True
+
+    Debug.Print "File = " & swModel.GetPathName
+    ' Traverse components and features
+    TraverseModelFeatures swModel, 1, xlWorksheet, row
+    TraverseComponent swRootComp, 1, xlWorksheet, row
+    
+    xlWorksheet.Columns("A:E").AutoFit
+End Sub
+
+Sub writeHeaders(xlWorksheet As Object, row As Long)
+    row = 1
+    
+    ' Write headers to Excel
+    xlWorksheet.Cells(row, 1).Value = "Component"
+    xlWorksheet.Cells(row, 2).Value = "Feature"
+    xlWorksheet.Cells(row, 3).Value = "X (mm)"
+    xlWorksheet.Cells(row, 4).Value = "Y (mm)"
+    xlWorksheet.Cells(row, 5).Value = "Z (mm)"
+    xlWorksheet.Cells(row, 1).Font.Bold = True
+    xlWorksheet.Cells(row, 2).Font.Bold = True
+    xlWorksheet.Cells(row, 3).Font.Bold = True
+    xlWorksheet.Cells(row, 4).Font.Bold = True
+    xlWorksheet.Cells(row, 5).Font.Bold = True
+    
+    row = row + 1
+End Sub
+
+Sub writeCoordinates(xlWorksheet As Object, row As Long)
+    xlWorksheet.Cells(row, 1).Value = swComp.Name2
+    xlWorksheet.Cells(row, 2).Value = swPt.ArrayData(0) * 1000#
+    xlWorksheet.Cells(row, 3).Value = swPt.ArrayData(1) * 1000#
+    xlWorksheet.Cells(row, 4).Value = swPt.ArrayData(2) * 1000#
+    row = row + 1
+End Sub
+
+Sub cmpSpace2asmSpace(swFeat As SldWorks.Feature, swComp As SldWorks.Component2, xlWorksheet As Object, row As Long)
+    Dim swApp As SldWorks.SldWorks
+    Dim swMathUtil As SldWorks.MathUtility
+    Dim swSelMgr As SldWorks.SelectionMgr
+    Dim swXform As SldWorks.MathTransform
+    Dim nPt(2) As Double
+    Dim vPt As Variant
+    Dim swPt As SldWorks.MathPoint
+    Set swApp = Application.SldWorks
+    Set swMathUtil = swApp.GetMathUtility
+    Set swXform = swComp.Transform2
+    
+    ' Point at component origin
+    Dim swMathPt As SldWorks.MathPoint
+    Set swMathPt = swFeat.GetSpecificFeature2.GetRefPoint
+    nPt(0) = swMathPt.ArrayData(0)
+    nPt(1) = swMathPt.ArrayData(1)
+    nPt(2) = swMathPt.ArrayData(2)
+    
+    vPt = nPt
+    Set swPt = swMathUtil.CreatePoint(vPt)
+    Set swPt = swPt.MultiplyTransform(swXform)
+    
+    xlWorksheet.Cells(row, 1).Value = RemoveAfterCaret(swComp.Name2)
+    xlWorksheet.Cells(row, 2).Value = swFeat.Name
+    
+    Dim var As Long
+    If Not swPt Is Nothing Then
+        var = swPt.ArrayData(0) * 1000#
+    Else
+        var = nPt(0)
+    End If
+        
+    If ignoreUnnamed = True And Left(swFeat.Name, 5) = "Point" Or ignoreMirrored = True And var * 1000# > 0 Then
+            'don't print shit.
+    Else
+        Debug.Print "  Component = " & RemoveAfterCaret(swComp.Name2) ' & " [" & swComp.GetPathName & "]"
+        Debug.Print "    Feature = " + swFeat.Name
+        'Debug.Print "      Point in component = (" & nPt(0) * 1000# 
+        'Debug.Print Str(swPt.ArrayData(0))
+        If Not swPt Is Nothing Then
+            Debug.Print "      Point in assembly = (" & swPt.ArrayData(0) * 1000# 
+            
+            xlWorksheet.Cells(row, 3).Value = swPt.ArrayData(0) * 1000#
+            xlWorksheet.Cells(row, 4).Value = swPt.ArrayData(1) * 1000#
+            xlWorksheet.Cells(row, 5).Value = swPt.ArrayData(2) * 1000#
+        Else
+            Debug.Print "      Point in assembly = (" & nPt(0) * 1000# 
+            
+            xlWorksheet.Cells(row, 3).Value = nPt(0) * 1000#
+            xlWorksheet.Cells(row, 4).Value = nPt(1) * 1000#
+            xlWorksheet.Cells(row, 5).Value = nPt(2) * 1000#
+        End If
+        
+        row = row + 1
+    End If
+End Sub
+
